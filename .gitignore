@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# C compilation artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.exp
+# Keep tracked source, but exclude machine binaries
+c_modules/*.dll
+c_modules/*.so
+c_modules/*.dylib
+
+# Database local instances (preserve schema, exclude local test databases)
+database/*.db
+database/*.sqlite3
+*.db
+*.sqlite3
+
+# Environments & IDEs
+.env
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

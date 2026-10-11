@@ -1,0 +1,33 @@
+# GitLab CI pipeline for Hochschule Offenburg Edugit (https://edugit.hs-offenburg.de)
+image: python:3.11-bookworm
+
+stages:
+  - build
+  - test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip/
+
+build-c-module:
+  stage: build
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq gcc build-essential
+  script:
+    - python c_modules/build.py
+  artifacts:
+    paths:
+      - c_modules/libentropy.so
+    expire_in: 1 week
+
+run-tests:
+  stage: test
+  dependencies:
+    - build-c-module
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - python -m unittest discover -s tests -p "test_*.py" -v
