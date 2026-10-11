@@ -33,7 +33,7 @@ def build():
         return False
 
     print(f"[*] Compiling {c_source.name} with {compiler} -> {dll_name}")
-    cmd = [compiler, "-shared", "-O2", "-o", str(out_file), str(c_source)]
+    cmd = [compiler, "-shared", "-fPIC", "-O2", "-o", str(out_file), str(c_source)]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode == 0:
         print(f"[SUCCESS] Compiled: {out_file}")

@@ -1,36 +1,72 @@
 """
 database.py: Simple SQLite database for storing passwords.
+Compatible with both local environments and serverless platforms like Vercel.
 """
+import os
 import sqlite3
+import tempfile
 from pathlib import Path
 
-DB_FILE = Path(__file__).resolve().parent / "passwords.db"
+def get_db_path() -> Path:
+    # On Vercel, AWS Lambda, or serverless environments, the project root is read-only.
+    # We use the system temporary directory (/tmp on Linux/Vercel) as writable storage.
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return Path(tempfile.gettempdir()) / "passwords.db"
+
+    local_path = Path(__file__).resolve().parent / "passwords.db"
+    try:
+        # Check if local directory is writable
+        test_file = Path(__file__).resolve().parent / ".write_test"
+        test_file.touch(exist_ok=True)
+        test_file.unlink(missing_ok=True)
+        return local_path
+    except (OSError, PermissionError):
+        return Path(tempfile.gettempdir()) / "passwords.db"
+
+DB_FILE = get_db_path()
 
 def get_connection():
-    conn = sqlite3.connect(str(DB_FILE))
-    conn.row_factory = sqlite3.Row
-    return conn
+    global DB_FILE
+    try:
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        return conn
+    except sqlite3.OperationalError:
+        # Fallback to temp directory if current path fails
+        DB_FILE = Path(tempfile.gettempdir()) / "passwords.db"
+        try:
+            conn = sqlite3.connect(str(DB_FILE))
+            conn.row_factory = sqlite3.Row
+            return conn
+        except sqlite3.OperationalError:
+            conn = sqlite3.connect(":memory:", check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            return conn
 
 def init_db():
     """Creates the passwords table if it does not exist yet."""
-    conn = get_connection()
     try:
-        with conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS passwords (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    service_name TEXT NOT NULL,
-                    username TEXT NOT NULL,
-                    password_value TEXT NOT NULL,
-                    hash_value TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-    finally:
-        conn.close()
+        conn = get_connection()
+        try:
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS passwords (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        service_name TEXT NOT NULL,
+                        username TEXT NOT NULL,
+                        password_value TEXT NOT NULL,
+                        hash_value TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Warning: Could not initialize database at {DB_FILE}: {e}")
 
 def save_password(service_name: str, username: str, password_value: str, hash_value: str = ""):
     """Inserts a new password record using parameterized queries (safe from SQL injection)."""
+    init_db()
     conn = get_connection()
     try:
         with conn:
@@ -45,6 +81,7 @@ def save_password(service_name: str, username: str, password_value: str, hash_va
 
 def get_all_passwords():
     """Retrieves all stored passwords, ordered from newest to oldest."""
+    init_db()
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -56,6 +93,7 @@ def get_all_passwords():
 
 def delete_password(item_id: int):
     """Deletes a password entry by ID."""
+    init_db()
     conn = get_connection()
     try:
         with conn:
@@ -65,5 +103,6 @@ def delete_password(item_id: int):
     finally:
         conn.close()
 
-# Initialize DB on load
+# Safe initialize on module load
 init_db()
+

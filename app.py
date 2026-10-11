@@ -17,11 +17,17 @@ from flask import Flask, request, jsonify, render_template
 
 import database as db
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parent
+app = Flask(
+    __name__,
+    template_folder=str(BASE_DIR / "templates"),
+    static_folder=str(BASE_DIR / "static"),
+    static_url_path="/static"
+)
 
 # --- 1. Load C Library via ctypes ---
 C_LIB = None
-C_MODULE_DIR = Path(__file__).resolve().parent / "c_module"
+C_MODULE_DIR = BASE_DIR / "c_module"
 
 def load_c_library():
     global C_LIB
@@ -33,7 +39,9 @@ def load_c_library():
         dll_name = "password_check.so"
 
     dll_path = C_MODULE_DIR / dll_name
-    if not dll_path.exists():
+
+    # Only attempt to compile locally if not in a serverless environment (e.g. Vercel)
+    if not dll_path.exists() and not os.environ.get("VERCEL") and not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
         try:
             import subprocess
             build_script = C_MODULE_DIR / "build_c.py"
