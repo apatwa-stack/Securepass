@@ -1,0 +1,3 @@
+{
+  "buildCommand": "python c_module/build_c.py || true"
+}
