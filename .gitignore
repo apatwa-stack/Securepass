@@ -30,9 +30,9 @@ wheels/
 *.lib
 *.exp
 # Keep tracked source, but exclude machine binaries
-c_modules/*.dll
-c_modules/*.so
-c_modules/*.dylib
+*.dll
+*.so
+*.dylib
 
 # Database local instances (preserve schema, exclude local test databases)
 database/*.db

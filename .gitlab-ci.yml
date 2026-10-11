@@ -17,10 +17,10 @@ build-c-module:
   before_script:
     - apt-get update -qq && apt-get install -y -qq gcc build-essential
   script:
-    - python c_modules/build.py
+    - python c_module/build_c.py
   artifacts:
     paths:
-      - c_modules/libentropy.so
+      - c_module/password_check.so
     expire_in: 1 week
 
 run-tests:
@@ -30,4 +30,4 @@ run-tests:
   before_script:
     - pip install -r requirements.txt
   script:
-    - python -m unittest discover -s tests -p "test_*.py" -v
+    - python test_app.py

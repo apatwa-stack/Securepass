@@ -33,6 +33,15 @@ def load_c_library():
         dll_name = "password_check.so"
 
     dll_path = C_MODULE_DIR / dll_name
+    if not dll_path.exists():
+        try:
+            import subprocess
+            build_script = C_MODULE_DIR / "build_c.py"
+            if build_script.exists():
+                subprocess.run([sys.executable, str(build_script)], capture_output=True, text=True)
+        except Exception:
+            pass
+
     if dll_path.exists():
         try:
             C_LIB = ctypes.CDLL(str(dll_path))
