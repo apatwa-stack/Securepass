@@ -161,117 +161,109 @@
     <span><strong>Hochschule Offenburg Academic Report</strong> - Ready for Moodle Submission</span>
     <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
 </div>
-<h1>SecurePass: A Secure RESTful Password Service with C-Based Entropy Analysis</h1>
-<p><strong>Author:</strong> Student   <strong>Course:</strong> Software Development / IT Security   <strong>Institution:</strong> Hochschule Offenburg (HSO)   <strong>Repository:</strong> [https://edugit.hs-offenburg.de](https://edugit.hs-offenburg.de)   <strong>Submission:</strong> Project Report & Code Implementation</p>
+<h1>SecurePass: A Minimalist RESTful Password Service with C Integration</h1>
+<p><strong>Author:</strong> Student   <strong>Course:</strong> Software Development / IT Security   <strong>Institution:</strong> Hochschule Offenburg (HSO)   <strong>Repository:</strong> [https://edugit.hs-offenburg.de](https://edugit.hs-offenburg.de)   <strong>Submission:</strong> Lab Task 1 Report</p>
 <hr class="divider">
 <h2>1. Introduction</h2>
-<p>Password security remains one of the most critical aspects of modern web applications. Users frequently choose weak, predictable passwords, or reuse the same credentials across multiple services. Furthermore, insecure password storage (such as using plain text or fast legacy hash algorithms like MD5 or SHA-1) allows attackers to compromise user accounts rapidly during a database leak.</p>
-<p>The goal of this project is to develop <strong>SecurePass</strong>, a complete and practical password management service that fulfills the following objectives: 1. <strong>Configurable Password Generation:</strong> Create random, unpredictable passwords and passphrases based on user-defined parameters such as length, character sets, and exclusions. 2. <strong>REST API via Flask:</strong> Expose all generation, analysis, and management capabilities through clean, stateless HTTP/JSON endpoints. 3. <strong>Data Persistence via SQLite:</strong> Store user accounts, saved passwords in a vault, and operational security audit logs safely in a local relational database. 4. <strong>PBKDF2 Password Hashing:</strong> Implement cryptographically secure key derivation using Python's standard <code>secrets</code> and <code>hashlib</code> libraries, protecting stored credentials against offline attacks. 5. <strong>C Programming Integration:</strong> Implement a performance-critical function in native C (calculating Shannon information entropy and character distribution) and call it directly from Python using <code>ctypes</code>.</p>
+<p>Passwords are the primary barrier defending user accounts against unauthorized access. Creating secure passwords requires genuine cryptographic randomness, while storing passwords securely requires slow, salted hashing to prevent offline brute-force attacks.</p>
+<p>The objective of this lab task is to design and implement <strong>SecurePass</strong>, a minimalist password service that satisfies all core requirements specified in the assignment: 1. <strong>Configurable Password Generation:</strong> Generates passwords based on parameters (length, uppercase, lowercase, numbers, symbols) using the cryptographic <code>secrets</code> module. 2. <strong>REST Web Service via Flask:</strong> Implements a clean REST API running on a lightweight Flask web server. 3. <strong>Data Persistence via SQLite:</strong> Stores and manages saved passwords in a local SQLite database (<code>passwords.db</code>). 4. <strong>PBKDF2 Password Hashing:</strong> Uses Python's standard <code>secrets</code> (for random salts) and <code>hashlib</code> (for PBKDF2-HMAC-SHA256 hashing) with constant-time verification. 5. <strong>C Programming Integration:</strong> Calls a native C function (<code>password_check.c</code>) from Python using <code>ctypes</code> to compute a password strength score.</p>
 <hr class="divider">
-<h2>2. Architecture & REST Service Design</h2>
-<p>The project is structured with a modular architecture to separate concerns between web routing, cryptography, database access, and native C code:</p>
+<h2>2. System Architecture & REST Service Design</h2>
+<p>The project is structured with a minimalist, single-tier organization where every component has a distinct purpose:</p>
 <pre class="code-block "><code>[ Web Browser / REST Client ]
-             │
-             ▼ (HTTP / JSON)
-[ Flask Web Server (app.py) ]
-   ├── Core Generator (core/generator.py)  --&gt; CSPRNG (secrets)
-   ├── PBKDF2 Hasher (core/hasher.py)      --&gt; hashlib &amp; secrets
-   ├── C Bridge (core/c_bridge.py)         --&gt; ctypes Foreign Function Interface
-   │                                           └── Native C Module (libentropy.dll/.so)
-   └── SQLite Database (database/db.py)     --&gt; securepass.db</code></pre>
+             │  HTTP / JSON
+             ▼
+      [ Flask (app.py) ]
+      ├── Generator Function (uses Python 'secrets')
+      ├── PBKDF2 Hasher (uses 'secrets' &amp; 'hashlib')
+      ├── C ctypes Foreign Function Interface (calls password_check.dll)
+      └── SQLite Persistence Layer (database.py)</code></pre>
 <h3>REST API Endpoints</h3>
-<p>The Flask server (<code>app.py</code>) provides the following endpoints:</p>
+<p>The Flask application (<code>app.py</code>) exposes the following endpoints:</p>
 <table class="academic-table">
-<thead><tr><th>Method</th><th>Endpoint</th><th>Description</th><th>Status Codes</th></tr></thead>
-<tbody><tr><td>`GET`</td><td>`/api/health`</td><td>Service status and C library availability</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/generate`</td><td>Generates a random password or passphrase with analysis</td><td>`200 OK`, `400 Bad Request`</td></tr><tr><td>`POST`</td><td>`/api/hash`</td><td>Hashes a password using PBKDF2 with a random salt</td><td>`200 OK`, `400 Bad Request`</td></tr><tr><td>`POST`</td><td>`/api/verify`</td><td>Verifies a password against a hash in constant time</td><td>`200 OK`, `400 Bad Request`</td></tr><tr><td>`POST`</td><td>`/api/analyze`</td><td>Evaluates password entropy using the native C library</td><td>`200 OK`, `400 Bad Request`</td></tr><tr><td>`POST`</td><td>`/api/users/register`</td><td>Registers a new user with PBKDF2-hashed credentials</td><td>`201 Created`, `409 Conflict`</td></tr><tr><td>`POST`</td><td>`/api/users/login`</td><td>Verifies user login credentials</td><td>`200 OK`, `401 Unauthorized`</td></tr><tr><td>`GET`</td><td>`/api/vault`</td><td>Retrieves saved password entries</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/vault`</td><td>Saves a new password entry to SQLite</td><td>`201 Created`, `400 Bad Request`</td></tr><tr><td>`DELETE`</td><td>`/api/vault/<id>`</td><td>Deletes a saved password entry by ID</td><td>`200 OK`, `404 Not Found`</td></tr><tr><td>`GET`</td><td>`/api/audit-logs`</td><td>Retrieves recent security audit entries</td><td>`200 OK`</td></tr></tbody></table>
+<thead><tr><th>Method</th><th>Endpoint</th><th>Description</th><th>Status Code</th></tr></thead>
+<tbody><tr><td>`GET`</td><td>`/`</td><td>Serves the single-page HTML/CSS dashboard</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/generate`</td><td>Generates a random password based on parameters</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/hash`</td><td>Computes a PBKDF2 hash using salt and hashlib</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/verify`</td><td>Verifies a candidate password in constant-time</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/check_strength`</td><td>Directly invokes the C function via ctypes</td><td>`200 OK`</td></tr><tr><td>`GET`</td><td>`/api/passwords`</td><td>Retrieves all saved passwords from SQLite</td><td>`200 OK`</td></tr><tr><td>`POST`</td><td>`/api/passwords`</td><td>Persists a new password entry to SQLite</td><td>`201 Created`</td></tr><tr><td>`DELETE`</td><td>`/api/passwords/<id>`</td><td>Deletes a stored password from SQLite</td><td>`200 OK`</td></tr></tbody></table>
 <hr class="divider">
-<h2>3. Password Generation with CSPRNG</h2>
-<p>Standard pseudo-random number generators, such as Python's default <code>random</code> module (which uses the Mersenne Twister algorithm), are deterministic and completely insecure for cryptography. If an attacker observes a sequence of outputs, they can reconstruct internal generator state and predict subsequent passwords.</p>
-<p>To guarantee cryptographic security, SecurePass exclusively uses Python's <code>secrets</code> module: - <strong><code>secrets.SystemRandom()</code> / <code>secrets.choice()</code>:</strong> Draws entropy directly from the underlying operating system's cryptographic entropy source (<code>/dev/urandom</code> on Linux, <code>CryptGenRandom</code> on Windows). - <strong>Configurable Parameters:</strong>   - <code>length</code>: Integer specifying total password length (default: 16, range: 4 to 256).   - Character sets: Toggleable uppercase (<code>A-Z</code>), lowercase (<code>a-z</code>), digits (<code>0-9</code>), and special symbols (<code>!@#<em>%^&*...</code>).   - <code>exclude_ambiguous</code>: Filters out characters that look identical in many fonts (<code>1</code>, <code>l</code>, <code>I</code>, <code>0</code>, <code>O</code>).   - <code>custom_exclude</code>: Blacklists specific characters specified by the caller.   - <code>guarantee_each_type</code>: Guarantees at least one character from every active character pool before shuffling with a Fisher-Yates shuffle.   - <strong>Passphrase Mode:</strong> Generates Diceware-style memorable passphrases (e.g., <code>Breeze-Canary-Cosmos-Anchor-42</code>) from a built-in clean wordlist.</p>
+<h2>3. Password Generation with CSPRNG (<code>secrets</code>)</h2>
+<p>In Python, the standard <code>random</code> module uses the Mersenne Twister algorithm. While fast for simulations, it is deterministic and predictable; if an attacker observes a sequence of outputs, they can reconstruct internal generator state and predict subsequent passwords.</p>
+<p>To ensure true unpredictability, SecurePass uses the Python standard library <strong><code>secrets</code></strong> module, which accesses operating system entropy (<code>CryptGenRandom</code> on Windows or <code>/dev/urandom</code> on Linux): - <strong><code>secrets.choice(pool)</code>:</strong> Picks characters from active pools (uppercase, lowercase, digits, symbols) with cryptographically secure random distribution. - <strong>Guarantee Policy:</strong> Ensures at least one character from every active set is selected first. - <strong><code>secrets.SystemRandom().shuffle()</code>:</strong> Cryptographically shuffles the final character list so that the guaranteed characters are randomly placed.</p>
 <hr class="divider">
 <h2>4. PBKDF2 Hashing using <code>secrets</code> and <code>hashlib</code></h2>
-<p>Storing passwords in plaintext or using fast hash algorithms (like MD5 or SHA-256 alone) is dangerous because attackers can test billions of guesses per second using modern GPUs. To prevent this, SecurePass implements <strong>PBKDF2</strong> (Password-Based Key Derivation Function 2) as recommended by NIST and OWASP.</p>
+<p>Storing passwords in plaintext or with simple fast hashes (such as MD5 or single-round SHA-256) is dangerous because modern GPUs can compute billions of hashes per second. SecurePass implements <strong>PBKDF2</strong> (Password-Based Key Derivation Function 2) according to security best practices.</p>
 <h3>4.1 Salt Generation (<code>secrets</code>)</h3>
-A salt is a unique, random string added to the password before hashing. This ensures that two users with identical passwords will have completely different stored hashes, eliminating rainbow table attacks.
-In <code>core/hasher.py</code>, SecurePass generates a fresh 32-byte (256-bit) salt for each password using:
-<pre class="code-block python"><code>salt_bytes = secrets.token_bytes(32)</code></pre>
-<h3>4.2 Key Derivation (<code>hashlib</code>)</h3>
-The key derivation is performed using <code>hashlib.pbkdf2_hmac</code>:
-<pre class="code-block python"><code>derived_key = hashlib.pbkdf2_hmac(
-    hash_name='sha256',
-    password=password.encode('utf-8'),
-    salt=salt_bytes,
-    iterations=600000,
-    dklen=32
+A salt is a unique, random string generated for every password. It ensures that identical passwords yield completely different hashes, neutralizing pre-computed rainbow table attacks:
+<pre class="code-block python"><code>salt_hex = secrets.token_hex(16)</code></pre>
+<h3>4.2 Key Derivation (<code>hashlib.pbkdf2_hmac</code>)</h3>
+The hash is computed using <code>hashlib.pbkdf2_hmac</code>:
+<pre class="code-block python"><code>derived_bytes = hashlib.pbkdf2_hmac(
+    hash_name="sha256",
+    password=password.encode("utf-8"),
+    salt=bytes.fromhex(salt_hex),
+    iterations=100000
 )</code></pre>
-- <strong>Iterations (Work Factor):</strong> Set to 600,000 iterations for SHA-256 (following OWASP guidelines). This intentionally slows down hash computation, making brute-force attacks computationally impractical.
-- <strong>Storage Format:</strong> Hashes are saved in a clean modular string format:
-  <code>pbkdf2:sha256:600000</em><salt_hex><em><hash_hex></code>
+The 100,000 iterations intentionally introduce a computational work factor, making brute-force dictionary attacks impractical.
 <h3>4.3 Constant-Time Verification</h3>
-During verification, standard string equality (<code>==</code>) stops comparing at the first mismatched byte. An attacker measuring response times with high precision could infer characters byte by byte (a timing attack). SecurePass prevents this by using:
-<pre class="code-block python"><code>secrets.compare_digest(candidate_hex, stored_hash_hex)</code></pre>
-This guarantees constant comparison time regardless of where or whether a mismatch occurs.
+Standard string comparison (<code>==</code>) exits immediately at the first non-matching byte, which leaks timing information (side-channel attack). SecurePass verifies passwords in constant time using:
+<pre class="code-block python"><code>secrets.compare_digest(candidate_hex, expected_hash_hex)</code></pre>
 <hr class="divider">
 <h2>5. Calling a Native C Function from Python (<code>ctypes</code>)</h2>
-<p>To fulfill the requirement of revising C programming by invoking a C function from Python, I implemented a <strong>Password Entropy & Strength Analyzer</strong> in C (<code>c_modules/entropy_analyzer.c</code>).</p>
+<p>To revise C programming and demonstrate cross-language interoperability, a native C function was developed in <code>c_module/password_check.c</code>.</p>
 <h3>5.1 What the C Function Does</h3>
-The C function evaluates the cryptographic strength of a given password string:
-1. <strong>Shannon Information Entropy:</strong> Calculates character frequency and computes:
-   <div class="math-display"><em>H = -\sum_{i=1}^{k} p(x_i) \log_2(p(x_i)) \times \text{length}</em></div>
-   This measures the actual information density and unpredictability of the string in bits.
-2. <strong>Character Pool Search Space:</strong> Counts uppercase letters, lowercase letters, digits, and symbols to determine total combinatorial search space </em>E = \text{length} \times \log_2(|R|)$.
-3. <strong>Offline Crack-Time Estimation:</strong> Estimates the time required for a high-end GPU cluster (10 billion guesses/second) to brute-force the password.
-4. <strong>Composite Strength Score:</strong> Assigns a score (0 to 100) and label ("Very Weak", "Weak", "Moderate", "Strong", "Very Strong").
-<h3>5.2 C Implementation</h3>
-In <code>c_modules/entropy_analyzer.h</code>, a C structure and exported functions are defined:
-<pre class="code-block c"><code>typedef struct {
-    int length;
-    int uppercase_count;
-    int lowercase_count;
-    int digit_count;
-    int symbol_count;
-    int pool_size;
-    double shannon_entropy;
-    double pool_entropy;
-    double crack_time_seconds;
-    int score;
-    char strength_label[32];
-} PasswordAnalysisResult;
+The C function <code>check_password_strength()</code> analyzes a password string directly in memory:
+1. It iterates through the string using a fast C pointer loop.
+2. It detects character categories using standard C library functions (<code>isupper</code>, <code>islower</code>, <code>isdigit</code>).
+3. It calculates a score from 0 to 100 based on length (4 points per character) and variety bonuses (10 for uppercase, 10 for lowercase, 10 for digits, 15 for special symbols).
+<pre class="code-block c"><code>EXPORT int check_password_strength(const char *password) {
+    if (!password) return 0;
+    int len = (int)strlen(password);
+    int has_upper = 0, has_lower = 0, has_digit = 0, has_special = 0;
+    for (int i = 0; i &lt; len; i++) {
+        unsigned char c = (unsigned char)password[i];
+        if (isupper(c)) has_upper = 1;
+        else if (islower(c)) has_lower = 1;
+        else if (isdigit(c)) has_digit = 1;
+        else has_special = 1;
+    }
+    int score = len * 4;
+    if (has_upper) score += 10;
+    if (has_lower) score += 10;
+    if (has_digit) score += 10;
+    if (has_special) score += 15;
+    return (score &gt; 100) ? 100 : score;
+}</code></pre>
+<h3>5.2 Python Binding via <code>ctypes</code></h3>
+Python binds to the compiled shared library (<code>password_check.dll</code> on Windows / <code>password_check.so</code> on Linux) using Python's built-in <code>ctypes</code> module:
+<pre class="code-block python"><code>import ctypes
+c_lib = ctypes.CDLL("./c_module/password_check.dll")
+c_lib.check_password_strength.argtypes = [ctypes.c_char_p]
+c_lib.check_password_strength.restype = ctypes.c_int
 
-int analyze_password(const char *password, PasswordAnalysisResult *result);</code></pre>
-<h3>5.3 Python Integration with <code>ctypes</code></h3>
-In <code>core/c_bridge.py</code>, Python loads the compiled shared library (<code>libentropy.dll</code> on Windows / <code>libentropy.so</code> on Linux) and maps the C struct directly using <code>ctypes</code>:
-<pre class="code-block python"><code>class PasswordAnalysisResultStruct(ctypes.Structure):
-    _fields_ = [
-        ("length", ctypes.c_int),
-        ("uppercase_count", ctypes.c_int),
-        ("lowercase_count", ctypes.c_int),
-        ("digit_count", ctypes.c_int),
-        ("symbol_count", ctypes.c_int),
-        ("pool_size", ctypes.c_int),
-        ("shannon_entropy", ctypes.c_double),
-        ("pool_entropy", ctypes.c_double),
-        ("crack_time_seconds", ctypes.c_double),
-        ("score", ctypes.c_int),
-        ("strength_label", ctypes.c_char * 32),
-    ]
-
-# Load compiled C library
-c_lib = ctypes.CDLL("./c_modules/libentropy.dll")
-c_lib.analyze_password.argtypes = [ctypes.c_char_p, ctypes.POINTER(PasswordAnalysisResultStruct)]</code></pre>
-Python passes the password string as <code>const char*</code> and a pointer to the pre-allocated struct. The C function populates the values in native memory, and Python reads the results with zero overhead.
+# Invoking the C function from Python
+score = c_lib.check_password_strength(password.encode("utf-8"))</code></pre>
+Python passes the string as a UTF-8 encoded byte array (<code>const char*</code>), and receives the integer score directly from compiled C machine code.
 <hr class="divider">
 <h2>6. SQLite Database Persistence</h2>
-<p>All application data is persisted in a local SQLite3 database (<code>database/securepass.db</code>): 1. <strong><code>users</code> Table:</strong> Stores user IDs, unique usernames, PBKDF2 password hashes, unique salts, iteration counts, and creation timestamps. 2. <strong><code>vault_items</code> Table:</strong> Allows users to store generated passwords for specific services (e.g., "HS Offenburg Git", "Email"), with service name, username, password value, category, and notes. 3. <strong><code>audit_logs</code> Table:</strong> Records security events (generation, hashing, verification, login success/failure) with IP addresses and timestamps.</p>
-<h3>SQL Injection Protection</h3>
-All database queries use parameterized SQL placeholders (<code>?</code>), preventing SQL injection attacks completely:
-<pre class="code-block python"><code>cursor.execute('SELECT * FROM users WHERE username = ?', (username.strip(),))</code></pre>
+<p>Data persistence is implemented in <code>database.py</code> using SQLite3 (<code>passwords.db</code>).</p>
+<h3>Database Schema</h3>
+<pre class="code-block sql"><code>CREATE TABLE IF NOT EXISTS passwords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_name TEXT NOT NULL,
+    username TEXT NOT NULL,
+    password_value TEXT NOT NULL,
+    hash_value TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+<h3>Protection Against SQL Injection</h3>
+All queries utilize parameterized SQL syntax with <code>?</code> place-holders:
+<pre class="code-block python"><code>cursor.execute("INSERT INTO passwords (service_name, username, password_value, hash_value) VALUES (?, ?, ?, ?);",
+               (service_name, username, password, hash_val))</code></pre>
+This guarantees that user input is never concatenated directly into SQL strings, eliminating SQL injection vulnerabilities.
 <hr class="divider">
-<h2>7. Testing and Verification</h2>
-<p>To ensure reliability, a test suite of <strong>27 automated unit and integration tests</strong> was developed in the <code>tests/</code> directory: - <strong><code>test_generator.py</code>:</strong> Tests length boundaries, character set inclusion, ambiguous exclusions, and batch generation. - <strong><code>test_hasher.py</code>:</strong> Tests salt uniqueness, deterministic hash reproducibility, and constant-time verification. - <strong><code>test_c_bridge.py</code>:</strong> Tests dynamic loading of the C shared library and verifies accuracy of C entropy calculations. - <strong><code>test_api.py</code>:</strong> Tests all Flask REST endpoints, status codes, and database CRUD operations.</p>
-<p><strong>Test Results:</strong> <pre class="code-block "><code>Ran 27 tests in 0.594s - OK (100% Passing)</code></pre></p>
+<h2>7. Automated Testing & Verification</h2>
+<p>A comprehensive test suite was implemented in <code>test_app.py</code> using Python's standard <code>unittest</code> framework: - <strong><code>test_generator</code>:</strong> Verifies length configuration and random output validity. - <strong><code>test_pbkdf2_hashing_and_verify</code>:</strong> Validates salt generation, key derivation, and matching vs non-matching verification. - <strong><code>test_c_function</code>:</strong> Confirms the C library loads successfully and computes correct strength scores. - <strong><code>test_sqlite_persistence</code>:</strong> Tests saving, listing, and deleting records in SQLite. - <strong><code>test_rest_api_*</code>:</strong> Verifies HTTP endpoints (<code>/api/generate</code>, <code>/api/hash</code>, <code>/api/verify</code>, <code>/api/check_strength</code>).</p>
+<p><strong>Execution Result:</strong> <pre class="code-block "><code>Ran 7 tests in 0.238s - OK (100% Passing)</code></pre></p>
 <hr class="divider">
 <h2>8. Conclusion</h2>
-<p>The SecurePass project successfully realizes a secure, modular password service meeting all assignment criteria: - Password generation is cryptographically unpredictable via <code>secrets</code>. - Passwords are securely hashed with PBKDF2 (600,000 iterations) via <code>secrets</code> and <code>hashlib</code>. - A native C function was written, compiled into a shared library, and seamlessly integrated into Python using <code>ctypes</code>. - Data is safely persisted in SQLite with parameterized queries. - All functionality is exposed through a clean Flask REST API and tested with an automated test suite.</p>
+<p>The SecurePass project successfully implements a clean, robust, and minimal password service that fulfills every requirement of Lab Task 1: - Secure generation via <code>secrets</code> - PBKDF2 hashing via <code>secrets</code> and <code>hashlib</code> - Data persistence via SQLite - Native C function integration via <code>ctypes</code> - REST service hosted on Flask</p>
 </body>
 </html>

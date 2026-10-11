@@ -1,86 +1,144 @@
-# Student Cheat Sheet: How to Explain Your Project to the Professor
+# Plain English Guide: How to Explain Every Single Point to Your Professor
 
-Keep this handy! If your professor asks you questions during your presentation or code review, here is how to explain everything in **simple, natural words**.
-
----
-
-## 1. The Elevator Pitch (What does your project do?)
-
-> *"I built **SecurePass**, a RESTful password service using Flask and SQLite. It generates strong, customized passwords using Python's `secrets` module, hashes them securely with PBKDF2, saves user credentials in an SQLite database, and calls a custom C function via `ctypes` to calculate the mathematical entropy (strength) of each password."*
+This guide explains **every single requirement from your lab task slide** in simple, plain English. You can read this before meeting your professor so you understand 100% of the code and can explain it smoothly without feeling nervous.
 
 ---
 
-## 2. Likely Questions & Exact Simple Answers
+## Slide Point 1: "Generate passwords based on configurable parameters"
 
-### Q1: "Why did you use the `secrets` module instead of `random`?"
-**Your answer:**
-> *"Python's standard `random` module uses Mersenne Twister, which is a pseudo-random generator designed for simulations, not security. If someone collects enough generated numbers, they can predict future outputs. The `secrets` module uses the operating system's cryptographic entropy source (`/dev/urandom` or `CryptGenRandom`), which is completely unpredictable."*
+### Where is the code?
+Inside [`app.py`](app.py), function `generate_password()`:
+```python
+def generate_password(length=16, use_upper=True, use_lower=True, use_digits=True, use_symbols=True):
+```
 
----
-
-### Q2: "How does your password generator handle configurable parameters?"
-**Your answer:**
-> *"In `core/generator.py`, I accept parameters like `length`, `include_uppercase`, `include_lowercase`, `include_digits`, `include_symbols`, and `exclude_ambiguous`. I build a pool of allowed characters, use `secrets.choice()` to ensure at least one character from each selected category is chosen, fill the rest from the combined pool, and then shuffle them using a Fisher-Yates shuffle."*
-
----
-
-### Q3: "How does your PBKDF2 hashing work?"
-**Your answer:**
-> *"In `core/hasher.py`, I use `hashlib.pbkdf2_hmac`. It takes four key inputs:
-> 1. The pseudo-random function: **HMAC-SHA256**.
-> 2. The password in UTF-8 bytes.
-> 3. A unique 32-byte (256-bit) salt generated with `secrets.token_bytes(32)`.
-> 4. An iteration work factor of **600,000 iterations**, which matches the latest OWASP recommendations to slow down GPU brute-force attacks."*
+### How to explain it simply:
+> *"Professor, my generator function accepts parameters for length and boolean flags for uppercase, lowercase, numbers, and symbols.  
+> Instead of using Python's basic `random` module, I used the **`secrets`** module (`secrets.choice`), which draws true cryptographic randomness from the operating system.  
+> First, it guarantees at least one character from each enabled category so the password is never missing a required type. Then, it fills the rest of the requested length from the character pool, and finally shuffles the characters so their positions are random."*
 
 ---
 
-### Q4: "Why do you need a salt, and what is constant-time comparison?"
-**Your answer:**
-> *"The salt ensures that even if two users have the exact same password, their stored hashes will look completely different. This defends against pre-computed rainbow table attacks.
-> Constant-time comparison (`secrets.compare_digest`) prevents timing attacks: regular `==` stops checking as soon as the first character is wrong, which leaks timing information. `compare_digest` takes the exact same amount of time regardless of mismatches."*
+## Slide Point 2: "Offer this as a REST service"
+
+### Where is the code?
+Inside [`app.py`](app.py), routes like:
+- `@app.route("/api/generate", methods=["POST", "GET"])`
+- `@app.route("/api/hash", methods=["POST"])`
+- `@app.route("/api/verify", methods=["POST"])`
+- `@app.route("/api/passwords", methods=["GET", "POST"])`
+- `@app.route("/api/check_strength", methods=["POST"])`
+
+### How to explain it simply:
+> *"Professor, I structured the backend as a RESTful JSON API. Any client — like a web browser, mobile app, or a command-line tool using `curl` — can send HTTP requests (GET, POST, DELETE) with JSON bodies, and the server returns standard JSON data along with standard HTTP status codes (`200 OK`, `201 Created`, `400 Bad Request`)."*
 
 ---
 
-### Q5: "What does your C function do, and why write it in C?"
-**Your answer:**
-> *"My C module is in `c_modules/entropy_analyzer.c`. It calculates **Shannon Information Entropy** and password complexity. It counts character frequencies in a fast loop, computes the Shannon entropy formula $H = -\sum p_i \log_2(p_i)$, checks character pool diversity, and estimates offline GPU crack time. I wrote it in C because raw byte counting and logarithmic math on strings are fast in native compiled code."*
+## Slide Point 3: "Use Flask as a webserver"
+
+### Where is the code?
+At the top and bottom of [`app.py`](app.py):
+```python
+from flask import Flask, request, jsonify, render_template
+
+app = Flask(__name__)
+...
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000)
+```
+
+### How to explain it simply:
+> *"I used Flask because it is Python's most lightweight and flexible web framework. It handles the HTTP routing, parses incoming JSON payloads with `request.get_json()`, formats JSON responses with `jsonify()`, and serves the frontend user interface using `render_template('index.html')`."*
 
 ---
 
-### Q6: "How does your Python code call the C function?"
-**Your answer:**
-> *"I compiled the C code into a shared library (`libentropy.dll` on Windows / `libentropy.so` on Linux). Then in `core/c_bridge.py`, I used Python's built-in `ctypes` module:
-> 1. I loaded the library with `ctypes.CDLL()`.
-> 2. I created a Python class subclassing `ctypes.Structure` matching the C struct.
-> 3. I set `argtypes` and `restype` on the C function.
-> 4. When called, Python passes the password string and a pointer to the struct, and C fills in the results."*
+## Slide Point 4: "Use SQLite for persisting data"
+
+### Where is the code?
+In [`database.py`](database.py):
+```python
+def init_db():
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS passwords (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_name TEXT NOT NULL,
+            username TEXT NOT NULL,
+            password_value TEXT NOT NULL,
+            hash_value TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+```
+
+### How to explain it simply:
+> *"I used Python's built-in `sqlite3` library. It creates a local relational database file called `passwords.db`.  
+> It has a table called `passwords` with columns for ID, service name, username, password value, its hash, and timestamp.  
+> To protect against SQL injection attacks, I always use parameterized SQL queries with `?` placeholders instead of concatenating strings."*
 
 ---
 
-### Q7: "How is data stored in SQLite?"
-**Your answer:**
-> *"In `database/db.py`, I created three tables:
-> - `users`: stores usernames and PBKDF2 password hashes + salts.
-> - `vault_items`: stores credentials for services (service name, username, password).
-> - `audit_logs`: records events with timestamps and IP addresses.
-> To prevent SQL injection, I used parameterized queries with `?` placeholders everywhere."*
+## Slide Point 5: "Use secrets and hashlib to realize a pbkdf2 based password hashing"
+
+### Where is the code?
+In [`app.py`](app.py), functions `hash_password_pbkdf2()` and `verify_password_pbkdf2()`:
+```python
+salt_hex = secrets.token_hex(16)
+derived_bytes = hashlib.pbkdf2_hmac(
+    hash_name="sha256",
+    password=password.encode("utf-8"),
+    salt=bytes.fromhex(salt_hex),
+    iterations=100000
+)
+```
+
+### How to explain it simply:
+> *"To hash passwords securely, I used two standard Python libraries:
+> 1. **`secrets.token_hex(16)`**: Generates a cryptographically random 16-byte salt for each password. This ensures that even if two users have the same password, their hashes are completely different, defeating rainbow tables.
+> 2. **`hashlib.pbkdf2_hmac`**: Computes PBKDF2 using SHA-256 with 100,000 iterations. The high iteration count intentionally slows down the calculation so an attacker cannot brute-force passwords quickly with GPUs.
+> 3. **`secrets.compare_digest`**: When verifying passwords, I use constant-time comparison to prevent side-channel timing attacks."*
 
 ---
 
-### Q8: "How did you test your project?"
-**Your answer:**
-> *"I wrote a complete test suite with 27 automated tests in the `tests/` folder using Python's `unittest` module. It tests parameter boundary checks, salt uniqueness, the C foreign function interface, and all Flask REST endpoints. All 27 tests pass in under 0.6 seconds."*
+## Slide Point 6: "Revise your C coding by calling a C function from your python code"
+
+### Where is the code?
+- The C source file: [`c_module/password_check.c`](c_module/password_check.c)
+- The compiled DLL: `c_module/password_check.dll`
+- The Python call: inside [`app.py`](app.py) using `ctypes`
+
+```c
+// In C (password_check.c):
+EXPORT int check_password_strength(const char *password) {
+    int len = (int)strlen(password);
+    // loops through characters, checks upper, lower, digits, symbols
+    // returns a score from 0 to 100
+}
+```
+
+```python
+# In Python (app.py):
+import ctypes
+c_lib = ctypes.CDLL("./c_module/password_check.dll")
+c_lib.check_password_strength.argtypes = [ctypes.c_char_p]
+c_lib.check_password_strength.restype = ctypes.c_int
+
+score = c_lib.check_password_strength(password.encode("utf-8"))
+```
+
+### How to explain it simply:
+> *"Professor, I wrote a C function called `check_password_strength` in `password_check.c`. It takes a password string, loops through each character in native C code, checks whether it contains uppercase, lowercase, numbers, or symbols, and computes a score from 0 to 100 based on length and variety.  
+> To call it from Python, I compiled it into a shared library (`.dll` on Windows / `.so` on Linux) and used Python's built-in **`ctypes`** library. `ctypes` allows Python to load compiled C libraries, set the argument types (`c_char_p`), pass data directly to C, and receive the integer return value with native execution speed."*
 
 ---
 
-## 3. Quick Demo Walkthrough (What to show your professor)
+## Slide Point 7: "Upload your code to HSO Github repo (https://edugit.hs-offenburg.de) and invite me as reporter"
 
-1. Open PowerShell and run:
-   ```powershell
-   python app.py
-   ```
-2. Open your browser to: **`http://127.0.0.1:5000`**
-3. **Show Tab 1 (Generator):** Move the length slider, click **Generate**, and point out the live **C-Powered Entropy Score & Crack Time meter**.
-4. **Show Tab 2 (Hasher):** Enter a password, click **Compute PBKDF2 Hash**, show the 256-bit salt and hash, and test verification.
-5. **Show Tab 3 (Vault):** Save a password to SQLite and toggle Show/Hide password.
-6. **Show Terminal Tests:** Run `python -m unittest discover -s tests -p "test_*.py"` to show all 27 tests passing!
+### How to explain it simply:
+> *"I pushed the code to my project repository on the university's GitLab platform (`https://edugit.hs-offenburg.de`). Under the project's 'Members' settings, I invited you with the role **Reporter** so you have full read access to inspect the repository and test the code."*
+
+---
+
+## Slide Point 8: "Submit: your repo link AND report (3-5 pages) to Moodle"
+
+### How to explain it simply:
+> *"I submitted my EduGit repository link and attached a comprehensive 4-page PDF report (`SecurePass_Academic_Report.pdf`) explaining the architecture, the cryptographic reasoning behind PBKDF2, the C integration using ctypes, and the test results."*

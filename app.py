@@ -1,372 +1,233 @@
 """
-SecurePass Flask Web Server & REST Service.
-Provides comprehensive endpoints for password generation, PBKDF2 hashing,
-C-driven entropy analysis, and SQLite vault persistence.
+app.py: Flask Webserver & REST API for Password Service.
+Features:
+- Configurable password generation (secrets module)
+- PBKDF2 hashing & verification (secrets + hashlib)
+- SQLite database persistence (database.py)
+- C function invocation for password strength (ctypes)
 """
-
 import os
 import sys
+import string
+import secrets
+import hashlib
+import ctypes
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template
 
-# Add root directory to sys.path so modules import reliably
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+import database as db
 
-from core.generator import (
-    generate_password,
-    generate_multiple_passwords,
-    generate_passphrase,
-    PasswordGenerationError
-)
-from core.hasher import (
-    hash_password,
-    verify_password,
-    verify_encoded,
-    PasswordHashingError,
-    DEFAULT_ITERATIONS
-)
-from core.c_bridge import bridge
-import database.db as db
+app = Flask(__name__)
 
-app = Flask(__name__, template_folder='templates', static_folder='static')
-app.config['JSON_SORT_KEYS'] = False
+# --- 1. Load C Library via ctypes ---
+C_LIB = None
+C_MODULE_DIR = Path(__file__).resolve().parent / "c_module"
 
-@app.route('/')
+def load_c_library():
+    global C_LIB
+    if sys.platform.startswith("win"):
+        dll_name = "password_check.dll"
+    elif sys.platform == "darwin":
+        dll_name = "password_check.dylib"
+    else:
+        dll_name = "password_check.so"
+
+    dll_path = C_MODULE_DIR / dll_name
+    if dll_path.exists():
+        try:
+            C_LIB = ctypes.CDLL(str(dll_path))
+            # Define argument and return types for the C function
+            C_LIB.check_password_strength.argtypes = [ctypes.c_char_p]
+            C_LIB.check_password_strength.restype = ctypes.c_int
+            print(f"[+] Loaded native C library: {dll_path.name}")
+        except Exception as e:
+            print(f"[!] Warning: Could not load C library: {e}")
+            C_LIB = None
+
+load_c_library()
+
+def call_c_strength_check(password: str) -> int:
+    """Calls the C function to calculate password strength (0 to 100)."""
+    if C_LIB:
+        return C_LIB.check_password_strength(password.encode("utf-8"))
+    
+    # Simple Python fallback if C library is not compiled
+    score = len(password) * 4
+    if any(c.isupper() for c in password): score += 10
+    if any(c.islower() for c in password): score += 10
+    if any(c.isdigit() for c in password): score += 10
+    if any(c in string.punctuation for c in password): score += 15
+    return min(score, 100)
+
+
+# --- 2. Password Generation (secrets module) ---
+def generate_password(length=16, use_upper=True, use_lower=True, use_digits=True, use_symbols=True) -> str:
+    """Generates a secure password using the CSPRNG 'secrets' module."""
+    pool = ""
+    guaranteed = []
+
+    if use_upper:
+        pool += string.ascii_uppercase
+        guaranteed.append(secrets.choice(string.ascii_uppercase))
+    if use_lower:
+        pool += string.ascii_lowercase
+        guaranteed.append(secrets.choice(string.ascii_lowercase))
+    if use_digits:
+        pool += string.digits
+        guaranteed.append(secrets.choice(string.digits))
+    if use_symbols:
+        pool += "!@#$%^&*()-_=+"
+        guaranteed.append(secrets.choice("!@#$%^&*()-_=+"))
+
+    if not pool:
+        pool = string.ascii_letters + string.digits
+
+    # Fill the remaining characters randomly using secrets.choice
+    remaining_count = max(0, length - len(guaranteed))
+    password_chars = guaranteed + [secrets.choice(pool) for _ in range(remaining_count)]
+
+    # Shuffle characters using secrets.SystemRandom so order is unpredictable
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars[:length])
+
+
+# --- 3. PBKDF2 Password Hashing (secrets + hashlib) ---
+def hash_password_pbkdf2(password: str, iterations=100000):
+    """
+    Hashes a password with PBKDF2:
+    - Generates a unique 16-byte random salt using secrets.token_hex(16)
+    - Hashes with hashlib.pbkdf2_hmac using SHA-256
+    """
+    salt_hex = secrets.token_hex(16)
+    salt_bytes = bytes.fromhex(salt_hex)
+
+    derived_bytes = hashlib.pbkdf2_hmac(
+        hash_name="sha256",
+        password=password.encode("utf-8"),
+        salt=salt_bytes,
+        iterations=iterations
+    )
+    hash_hex = derived_bytes.hex()
+    return salt_hex, hash_hex, iterations
+
+def verify_password_pbkdf2(password: str, salt_hex: str, expected_hash_hex: str, iterations=100000) -> bool:
+    """Verifies a password against salt and hash using constant-time comparison."""
+    salt_bytes = bytes.fromhex(salt_hex)
+    candidate_bytes = hashlib.pbkdf2_hmac(
+        hash_name="sha256",
+        password=password.encode("utf-8"),
+        salt=salt_bytes,
+        iterations=iterations
+    )
+    candidate_hex = candidate_bytes.hex()
+    # secrets.compare_digest prevents side-channel timing attacks
+    return secrets.compare_digest(candidate_hex, expected_hash_hex)
+
+
+# --- 4. Web & REST API Routes ---
+
+@app.route("/")
 def index():
-    """Serves the interactive web UI dashboard."""
-    return render_template('index.html')
+    """Serves the simple single-page dashboard."""
+    return render_template("index.html")
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """System health check and diagnostic status."""
+@app.route("/api/generate", methods=["POST", "GET"])
+def api_generate():
+    """REST endpoint: Generate a password with configurable parameters."""
+    data = request.get_json(silent=True) or request.args.to_dict()
+    length = int(data.get("length", 16))
+    use_upper = str(data.get("upper", "true")).lower() == "true"
+    use_lower = str(data.get("lower", "true")).lower() == "true"
+    use_digits = str(data.get("digits", "true")).lower() == "true"
+    use_symbols = str(data.get("symbols", "true")).lower() == "true"
+
+    password = generate_password(length, use_upper, use_lower, use_digits, use_symbols)
+    strength_score = call_c_strength_check(password)
+
     return jsonify({
-        "status": "healthy",
-        "service": "SecurePass REST Service",
-        "version": "1.0.0",
-        "c_engine_loaded": bridge.is_c_loaded,
-        "c_library_file": bridge._lib_path if bridge.is_c_loaded else None,
-        "database": "SQLite3 (active)"
+        "password": password,
+        "length": len(password),
+        "strength_score": strength_score,
+        "c_function_used": C_LIB is not None
     }), 200
 
-# --- Password Generation REST Endpoints ---
-
-@app.route('/api/generate', methods=['POST', 'GET'])
-def api_generate():
-    """
-    Generate secure passwords based on configurable parameters.
-    Supports both JSON body (POST) and Query parameters (GET/POST).
-    """
-    data = request.get_json(silent=True) or request.args.to_dict()
-
-    mode = data.get('mode', 'password')
-
-    try:
-        if mode == 'passphrase':
-            word_count = int(data.get('word_count', 4))
-            separator = str(data.get('separator', '-'))
-            capitalize = str(data.get('capitalize', 'true')).lower() in ['true', '1', 'yes']
-            include_number = str(data.get('include_number', 'true')).lower() in ['true', '1', 'yes']
-
-            generated = generate_passphrase(
-                word_count=word_count,
-                separator=separator,
-                capitalize=capitalize,
-                include_number=include_number
-            )
-            analysis = bridge.analyze(generated)
-
-            db.log_audit("GENERATE_PASSPHRASE", f"Generated passphrase (words: {word_count})", request.remote_addr)
-
-            return jsonify({
-                "mode": "passphrase",
-                "password": generated,
-                "analysis": analysis
-            }), 200
-
-        else:
-            length = int(data.get('length', 16))
-            include_uppercase = str(data.get('include_uppercase', 'true')).lower() in ['true', '1', 'yes']
-            include_lowercase = str(data.get('include_lowercase', 'true')).lower() in ['true', '1', 'yes']
-            include_digits = str(data.get('include_digits', 'true')).lower() in ['true', '1', 'yes']
-            include_symbols = str(data.get('include_symbols', 'true')).lower() in ['true', '1', 'yes']
-            exclude_ambiguous = str(data.get('exclude_ambiguous', 'false')).lower() in ['true', '1', 'yes']
-            custom_exclude = data.get('custom_exclude', None)
-            count = int(data.get('count', 1))
-
-            if count > 1:
-                passwords = generate_multiple_passwords(
-                    count=count,
-                    length=length,
-                    include_uppercase=include_uppercase,
-                    include_lowercase=include_lowercase,
-                    include_digits=include_digits,
-                    include_symbols=include_symbols,
-                    exclude_ambiguous=exclude_ambiguous,
-                    custom_exclude=custom_exclude
-                )
-                results = []
-                for pw in passwords:
-                    results.append({
-                        "password": pw,
-                        "analysis": bridge.analyze(pw)
-                    })
-
-                db.log_audit("GENERATE_BATCH", f"Batch generated {count} passwords", request.remote_addr)
-                return jsonify({
-                    "mode": "batch_passwords",
-                    "count": count,
-                    "passwords": results
-                }), 200
-            else:
-                pw = generate_password(
-                    length=length,
-                    include_uppercase=include_uppercase,
-                    include_lowercase=include_lowercase,
-                    include_digits=include_digits,
-                    include_symbols=include_symbols,
-                    exclude_ambiguous=exclude_ambiguous,
-                    custom_exclude=custom_exclude
-                )
-                analysis = bridge.analyze(pw)
-
-                db.log_audit("GENERATE_PASSWORD", f"Generated password (length: {length})", request.remote_addr)
-                return jsonify({
-                    "mode": "password",
-                    "password": pw,
-                    "analysis": analysis,
-                    "parameters": {
-                        "length": length,
-                        "include_uppercase": include_uppercase,
-                        "include_lowercase": include_lowercase,
-                        "include_digits": include_digits,
-                        "include_symbols": include_symbols,
-                        "exclude_ambiguous": exclude_ambiguous,
-                        "custom_exclude": custom_exclude
-                    }
-                }), 200
-
-    except PasswordGenerationError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-# --- C Entropy Analysis REST Endpoint ---
-
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    """
-    Evaluates password strength and entropy using native C shared library.
-    """
-    data = request.get_json(silent=True) or {}
-    password = data.get('password', '')
-
-    if not isinstance(password, str):
-        return jsonify({"error": "Field 'password' must be a string."}), 400
-
-    try:
-        analysis = bridge.analyze(password)
-        return jsonify(analysis), 200
-    except Exception as e:
-        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
-
-# --- PBKDF2 Hashing and Verification REST Endpoints ---
-
-@app.route('/api/hash', methods=['POST'])
+@app.route("/api/hash", methods=["POST"])
 def api_hash():
-    """
-    Hashes a password using PBKDF2 with CSPRNG salt via secrets and hashlib.
-    """
+    """REST endpoint: Hash a password with PBKDF2."""
     data = request.get_json(silent=True) or {}
-    password = data.get('password')
-    iterations = int(data.get('iterations', DEFAULT_ITERATIONS))
-    algorithm = data.get('algorithm', 'sha256')
-    custom_salt = data.get('salt')
-
+    password = data.get("password", "")
     if not password:
-        return jsonify({"error": "Field 'password' is required."}), 400
+        return jsonify({"error": "Password cannot be empty"}), 400
 
-    try:
-        result = hash_password(
-            password=password,
-            salt=custom_salt,
-            iterations=iterations,
-            algorithm=algorithm
-        )
-        db.log_audit("HASH_PASSWORD", f"Hashed password (iter: {iterations}, algo: {algorithm})", request.remote_addr)
-        return jsonify(result), 200
-    except PasswordHashingError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": f"Hashing failed: {str(e)}"}), 500
+    salt_hex, hash_hex, iterations = hash_password_pbkdf2(password)
+    return jsonify({
+        "salt": salt_hex,
+        "hash": hash_hex,
+        "iterations": iterations,
+        "algorithm": "PBKDF2-HMAC-SHA256"
+    }), 200
 
-@app.route('/api/verify', methods=['POST'])
+@app.route("/api/verify", methods=["POST"])
 def api_verify():
-    """
-    Verifies a candidate password against PBKDF2 hash and salt using constant-time comparison.
-    """
+    """REST endpoint: Verify a password against salt and hash."""
     data = request.get_json(silent=True) or {}
-    password = data.get('password')
-    encoded = data.get('encoded')
+    password = data.get("password", "")
+    salt = data.get("salt", "")
+    stored_hash = data.get("hash", "")
+    iterations = int(data.get("iterations", 100000))
 
-    if not password:
-        return jsonify({"error": "Field 'password' is required."}), 400
+    if not password or not salt or not stored_hash:
+        return jsonify({"error": "Must provide password, salt, and hash"}), 400
 
-    if encoded:
-        valid = verify_encoded(password, encoded)
-    else:
-        stored_hash = data.get('stored_hash') or data.get('hash_hex')
-        stored_salt = data.get('stored_salt') or data.get('salt_hex')
-        iterations = int(data.get('iterations', DEFAULT_ITERATIONS))
-        algorithm = data.get('algorithm', 'sha256')
-
-        if not stored_hash or not stored_salt:
-            return jsonify({"error": "Must provide either 'encoded' or ('stored_hash' and 'stored_salt')."}), 400
-
-        valid = verify_password(
-            password=password,
-            stored_hash_hex=stored_hash,
-            stored_salt_hex=stored_salt,
-            iterations=iterations,
-            algorithm=algorithm
-        )
-
-    db.log_audit("VERIFY_PASSWORD", f"Verification outcome: {valid}", request.remote_addr)
+    valid = verify_password_pbkdf2(password, salt, stored_hash, iterations)
     return jsonify({
         "valid": valid,
-        "message": "Password matches hash" if valid else "Password does not match hash"
+        "message": "Password matches!" if valid else "Password is WRONG!"
     }), 200
 
-# --- User Management REST Endpoints ---
-
-@app.route('/api/users/register', methods=['POST'])
-def api_register_user():
-    """
-    Registers a new user and persists their PBKDF2 hash & salt in SQLite.
-    """
+@app.route("/api/check_strength", methods=["POST"])
+def api_check_strength():
+    """REST endpoint: Directly calls C function via ctypes."""
     data = request.get_json(silent=True) or {}
-    username = data.get('username')
-    password = data.get('password')
-
-    if not username or not password:
-        return jsonify({"error": "Both 'username' and 'password' are required."}), 400
-
-    if db.get_user_by_username(username):
-        return jsonify({"error": f"Username '{username}' already exists."}), 409
-
-    hashed = hash_password(password)
-    user_id = db.create_user(
-        username=username,
-        password_hash=hashed['hash_hex'],
-        salt=hashed['salt_hex'],
-        iterations=hashed['iterations']
-    )
-
-    db.log_audit("USER_REGISTER", f"User registered: {username} (ID: {user_id})", request.remote_addr)
+    password = data.get("password", "")
+    score = call_c_strength_check(password)
     return jsonify({
-        "message": "User registered successfully.",
-        "user_id": user_id,
-        "username": username
-    }), 201
+        "password": password,
+        "strength_score": score,
+        "c_library_active": C_LIB is not None
+    }), 200
 
-@app.route('/api/users/login', methods=['POST'])
-def api_login_user():
-    """
-    Authenticates a user by retrieving salt & hash from SQLite and verifying.
-    """
-    data = request.get_json(silent=True) or {}
-    username = data.get('username')
-    password = data.get('password')
+@app.route("/api/passwords", methods=["GET", "POST"])
+def api_passwords():
+    """REST endpoint: List all saved passwords or save a new one to SQLite."""
+    if request.method == "GET":
+        items = db.get_all_passwords()
+        return jsonify({"passwords": items}), 200
 
-    if not username or not password:
-        return jsonify({"error": "Both 'username' and 'password' are required."}), 400
-
-    user = db.get_user_by_username(username)
-    if not user:
-        db.log_audit("LOGIN_FAILED", f"User not found: {username}", request.remote_addr)
-        return jsonify({"authenticated": False, "error": "Invalid username or password."}), 401
-
-    valid = verify_password(
-        password=password,
-        stored_hash_hex=user['password_hash'],
-        stored_salt_hex=user['salt'],
-        iterations=user['iterations']
-    )
-
-    if valid:
-        db.log_audit("LOGIN_SUCCESS", f"User logged in: {username}", request.remote_addr)
-        return jsonify({
-            "authenticated": True,
-            "message": "Login successful.",
-            "user": {
-                "id": user['id'],
-                "username": user['username'],
-                "created_at": user['created_at']
-            }
-        }), 200
-    else:
-        db.log_audit("LOGIN_FAILED", f"Incorrect password for user: {username}", request.remote_addr)
-        return jsonify({"authenticated": False, "error": "Invalid username or password."}), 401
-
-# --- SQLite Vault REST Endpoints ---
-
-@app.route('/api/vault', methods=['GET', 'POST'])
-def api_vault():
-    """
-    GET: List saved vault items.
-    POST: Store a new credential into SQLite.
-    """
-    if request.method == 'GET':
-        user_id = request.args.get('user_id', type=int)
-        items = db.get_vault_items(user_id=user_id)
-        return jsonify({"count": len(items), "vault": items}), 200
-
-    elif request.method == 'POST':
+    elif request.method == "POST":
         data = request.get_json(silent=True) or {}
-        service_name = data.get('service_name')
-        username_or_email = data.get('username_or_email')
-        password_value = data.get('password_value')
-        category = data.get('category', 'General')
-        notes = data.get('notes', '')
-        user_id = data.get('user_id')
+        service = data.get("service_name", "").strip()
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
 
-        if not service_name or not username_or_email or not password_value:
-            return jsonify({"error": "service_name, username_or_email, and password_value are required."}), 400
+        if not service or not username or not password:
+            return jsonify({"error": "service_name, username, and password are required"}), 400
 
-        item_id = db.create_vault_item(
-            service_name=service_name,
-            username_or_email=username_or_email,
-            password_value=password_value,
-            category=category,
-            notes=notes,
-            user_id=user_id
-        )
+        # Also store the PBKDF2 hash of the password
+        salt, hash_val, _ = hash_password_pbkdf2(password)
+        new_id = db.save_password(service, username, password, hash_val)
+        return jsonify({"message": "Saved to SQLite!", "id": new_id}), 201
 
-        db.log_audit("VAULT_STORE", f"Stored credential for {service_name} (ID: {item_id})", request.remote_addr)
-        return jsonify({
-            "message": "Credential stored in SQLite vault successfully.",
-            "item_id": item_id
-        }), 201
+@app.route("/api/passwords/<int:item_id>", methods=["DELETE"])
+def api_delete_password(item_id):
+    """REST endpoint: Delete a password by ID from SQLite."""
+    deleted = db.delete_password(item_id)
+    if deleted:
+        return jsonify({"message": f"Deleted password {item_id}"}), 200
+    return jsonify({"error": "Not found"}), 404
 
-@app.route('/api/vault/<int:item_id>', methods=['DELETE'])
-def api_delete_vault(item_id):
-    """Deletes a credential from the SQLite vault."""
-    success = db.delete_vault_item(item_id)
-    if success:
-        db.log_audit("VAULT_DELETE", f"Deleted vault item ID {item_id}", request.remote_addr)
-        return jsonify({"message": f"Vault item {item_id} deleted."}), 200
-    else:
-        return jsonify({"error": f"Item {item_id} not found."}), 404
 
-# --- Audit Logs REST Endpoint ---
-
-@app.route('/api/audit-logs', methods=['GET'])
-def api_audit_logs():
-    """Returns recent security audit logs."""
-    limit = request.args.get('limit', default=50, type=int)
-    logs = db.get_audit_logs(limit=limit)
-    return jsonify({"count": len(logs), "logs": logs}), 200
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f"[*] Starting SecurePass server on http://127.0.0.1:{port}")
-    app.run(host='127.0.0.1', port=port, debug=True)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[*] Starting Simple Password Service on http://127.0.0.1:{port}")
+    app.run(host="127.0.0.1", port=port, debug=False)
