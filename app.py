@@ -78,7 +78,7 @@ def api_generate():
         str(data.get("digits", "true")).lower() == "true",
         str(data.get("symbols", "true")).lower() == "true"
     )
-    return jsonify({"password": pw, "length": len(pw), "strength_score": call_c_strength_check(pw), "c_function_used": C_LIB is not None})
+    return jsonify({"password": pw, "length": len(pw)})
 
 @app.route("/api/hash", methods=["POST"])
 def api_hash():
@@ -142,40 +142,32 @@ def terminal_menu():
             except ValueError:
                 length = 16
             pw = generate_password(length)
-            score = call_c_strength_check(pw)
-            print(f"\n[+] Password: {pw}")
-            print(f"[+] Strength (C): {score}/100")
+            print(f"\nPassword: {pw}")
         elif choice == "2":
             pw = input("Enter password to hash: ")
             salt, h, iters = hash_password_pbkdf2(pw)
-            print(f"\n[+] Salt (hex): {salt}")
-            print(f"[+] Hash (hex): {h}")
-            print(f"[+] Iterations: {iters}")
+            print(f"\nSalt: {salt}\nHash: {h}\nIterations: {iters}")
         elif choice == "3":
             pw = input("Enter password: ")
-            salt = input("Enter salt (hex): ")
-            h = input("Enter hash (hex): ")
-            valid = verify_password_pbkdf2(pw, salt, h)
-            print("\n[+] Verification Result:", "MATCH (valid)" if valid else "FAILED (wrong password)")
+            salt = input("Enter salt: ")
+            h = input("Enter hash: ")
+            print("\nMatch" if verify_password_pbkdf2(pw, salt, h) else "\nNo match")
         elif choice == "4":
             pw = input("Enter password to test: ")
             score = call_c_strength_check(pw)
-            c_used = "native C library" if C_LIB else "python fallback"
-            print(f"\n[+] Strength Score: {score}/100 (via {c_used})")
+            print(f"\nStrength Score: {score}/100")
         elif choice == "5":
             svc = input("Service Name: ")
             usr = input("Username/Email: ")
             pw = input("Password: ")
-            if not (svc and usr and pw):
-                print("[!] Error: All fields are required.")
-                continue
-            _, h, _ = hash_password_pbkdf2(pw)
-            new_id = db.save_password(svc, usr, pw, h)
-            print(f"\n[+] Password saved in SQLite with ID #{new_id}")
+            if svc and usr and pw:
+                _, h, _ = hash_password_pbkdf2(pw)
+                new_id = db.save_password(svc, usr, pw, h)
+                print(f"\nSaved (ID: {new_id})")
         elif choice == "6":
             passwords = db.get_all_passwords()
             if not passwords:
-                print("\nNo saved passwords found.")
+                print("\nNo saved passwords.")
             else:
                 print(f"\n{'ID':<5} {'SERVICE':<15} {'USERNAME':<25} {'PASSWORD'}")
                 print("-" * 65)
@@ -184,30 +176,23 @@ def terminal_menu():
         elif choice == "7":
             try:
                 item_id = int(input("Enter ID to delete: "))
-                if db.delete_password(item_id):
-                    print(f"\n[+] Password #{item_id} deleted.")
-                else:
-                    print(f"\n[!] Password #{item_id} not found.")
+                print(f"\nDeleted ID {item_id}" if db.delete_password(item_id) else f"\nID {item_id} not found")
             except ValueError:
-                print("[!] Invalid ID.")
+                pass
         elif choice == "8":
             port = int(os.environ.get("PORT", 5000))
-            print(f"\n[*] Starting Flask REST API on http://127.0.0.1:{port}")
-            print("[*] Press Ctrl+C to return to terminal menu.\n")
+            print(f"\nStarting Flask REST API on http://127.0.0.1:{port} (Ctrl+C to stop)\n")
             try:
                 app.run(host="127.0.0.1", port=port, debug=False)
             except KeyboardInterrupt:
-                print("\n[*] Stopped server.")
+                print("\nServer stopped.")
         elif choice == "9":
-            print("\nExiting SecurePass. Goodbye!")
+            print("\nExiting.")
             break
-        else:
-            print("[!] Invalid selection, please choose 1-9.")
 
 if __name__ == "__main__":
     if "--server" in sys.argv or "-s" in sys.argv:
         port = int(os.environ.get("PORT", 5000))
-        print(f"[*] Starting Simple Password Service on http://127.0.0.1:{port}")
         app.run(host="127.0.0.1", port=port, debug=False)
     else:
         terminal_menu()
