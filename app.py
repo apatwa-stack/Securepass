@@ -1,10 +1,10 @@
 import os, sys, string, secrets, hashlib, ctypes
 from pathlib import Path
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 import database as db
 
 BASE_DIR = Path(__file__).resolve().parent
-app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"), static_url_path="/static")
+app = Flask(__name__)
 
 C_LIB = None
 
@@ -65,7 +65,7 @@ def verify_password_pbkdf2(password: str, salt_hex: str, expected_hash_hex: str,
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return jsonify({"service": "SecurePass REST API", "status": "running"})
 
 @app.route("/api/generate", methods=["POST", "GET"])
 def api_generate():
@@ -119,7 +119,95 @@ def api_delete_password(item_id):
         return jsonify({"message": f"Deleted password {item_id}"})
     return jsonify({"error": "Not found"}), 404
 
+def terminal_menu():
+    while True:
+        print("\n" + "=" * 45)
+        print("        SECUREPASS - TERMINAL VAULT")
+        print("=" * 45)
+        print("1. Generate Password")
+        print("2. PBKDF2 Hash Password")
+        print("3. Verify Password Hash")
+        print("4. Check Strength via C (ctypes)")
+        print("5. Save Password to SQLite")
+        print("6. List Saved Passwords")
+        print("7. Delete Saved Password")
+        print("8. Start Flask REST API Server")
+        print("9. Exit")
+        print("=" * 45)
+        choice = input("Enter choice (1-9): ").strip()
+
+        if choice == "1":
+            try:
+                length = int(input("Length (default 16): ") or 16)
+            except ValueError:
+                length = 16
+            pw = generate_password(length)
+            score = call_c_strength_check(pw)
+            print(f"\n[+] Password: {pw}")
+            print(f"[+] Strength (C): {score}/100")
+        elif choice == "2":
+            pw = input("Enter password to hash: ")
+            salt, h, iters = hash_password_pbkdf2(pw)
+            print(f"\n[+] Salt (hex): {salt}")
+            print(f"[+] Hash (hex): {h}")
+            print(f"[+] Iterations: {iters}")
+        elif choice == "3":
+            pw = input("Enter password: ")
+            salt = input("Enter salt (hex): ")
+            h = input("Enter hash (hex): ")
+            valid = verify_password_pbkdf2(pw, salt, h)
+            print("\n[+] Verification Result:", "MATCH (valid)" if valid else "FAILED (wrong password)")
+        elif choice == "4":
+            pw = input("Enter password to test: ")
+            score = call_c_strength_check(pw)
+            c_used = "native C library" if C_LIB else "python fallback"
+            print(f"\n[+] Strength Score: {score}/100 (via {c_used})")
+        elif choice == "5":
+            svc = input("Service Name: ")
+            usr = input("Username/Email: ")
+            pw = input("Password: ")
+            if not (svc and usr and pw):
+                print("[!] Error: All fields are required.")
+                continue
+            _, h, _ = hash_password_pbkdf2(pw)
+            new_id = db.save_password(svc, usr, pw, h)
+            print(f"\n[+] Password saved in SQLite with ID #{new_id}")
+        elif choice == "6":
+            passwords = db.get_all_passwords()
+            if not passwords:
+                print("\nNo saved passwords found.")
+            else:
+                print(f"\n{'ID':<5} {'SERVICE':<15} {'USERNAME':<25} {'PASSWORD'}")
+                print("-" * 65)
+                for p in passwords:
+                    print(f"{p['id']:<5} {p['service_name']:<15} {p['username']:<25} {p['password_value']}")
+        elif choice == "7":
+            try:
+                item_id = int(input("Enter ID to delete: "))
+                if db.delete_password(item_id):
+                    print(f"\n[+] Password #{item_id} deleted.")
+                else:
+                    print(f"\n[!] Password #{item_id} not found.")
+            except ValueError:
+                print("[!] Invalid ID.")
+        elif choice == "8":
+            port = int(os.environ.get("PORT", 5000))
+            print(f"\n[*] Starting Flask REST API on http://127.0.0.1:{port}")
+            print("[*] Press Ctrl+C to return to terminal menu.\n")
+            try:
+                app.run(host="127.0.0.1", port=port, debug=False)
+            except KeyboardInterrupt:
+                print("\n[*] Stopped server.")
+        elif choice == "9":
+            print("\nExiting SecurePass. Goodbye!")
+            break
+        else:
+            print("[!] Invalid selection, please choose 1-9.")
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"[*] Starting Simple Password Service on http://127.0.0.1:{port}")
-    app.run(host="127.0.0.1", port=port, debug=False)
+    if "--server" in sys.argv or "-s" in sys.argv:
+        port = int(os.environ.get("PORT", 5000))
+        print(f"[*] Starting Simple Password Service on http://127.0.0.1:{port}")
+        app.run(host="127.0.0.1", port=port, debug=False)
+    else:
+        terminal_menu()
