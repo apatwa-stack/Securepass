@@ -1,5 +1,5 @@
 import unittest
-from app import app, generate_password, hash_password_pbkdf2, verify_password_pbkdf2, call_c_strength_check
+from app import app, generate_password, hash_password_pbkdf2, verify_password_pbkdf2, call_c_function
 import database as db
 
 class TestPasswordService(unittest.TestCase):
@@ -17,8 +17,8 @@ class TestPasswordService(unittest.TestCase):
         self.assertFalse(verify_password_pbkdf2("WrongPassword", salt, hash_val, iters))
 
     def test_c_function(self):
-        score = call_c_strength_check("Aa1!Aa1!Aa1!")
-        self.assertTrue(50 < score <= 100)
+        self.assertTrue(call_c_function("Aa1!Aa1!Aa1!"))
+        self.assertFalse(call_c_function("lowercaseonly"))
 
     def test_sqlite_persistence(self):
         new_id = db.save_password("TestService", "student@hs-offenburg.de", "TestPass123", "dummyhash")
@@ -39,10 +39,10 @@ class TestPasswordService(unittest.TestCase):
         self.assertEqual(verify_res.status_code, 200)
         self.assertTrue(verify_res.get_json()["valid"])
 
-    def test_rest_api_check_strength(self):
-        res = self.client.post("/api/check_strength", json={"password": "HelloPassword99!"})
+    def test_rest_api_c_check(self):
+        res = self.client.post("/api/c_check", json={"password": "Aa1!Aa1!Aa1!"})
         self.assertEqual(res.status_code, 200)
-        self.assertIn("strength_score", res.get_json())
+        self.assertTrue(res.get_json()["valid"])
 
 if __name__ == "__main__":
     unittest.main()

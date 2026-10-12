@@ -2,12 +2,9 @@ import os, sys, string, secrets, hashlib, ctypes
 from pathlib import Path
 from flask import Flask, request, jsonify
 import database as db
-
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__)
-
 C_LIB = None
-
 def load_c_library():
     global C_LIB
     ext = ".dll" if sys.platform.startswith("win") else (".dylib" if sys.platform == "darwin" else ".so")
@@ -21,23 +18,20 @@ def load_c_library():
     if dll_path.exists():
         try:
             C_LIB = ctypes.CDLL(str(dll_path))
-            C_LIB.check_password_strength.argtypes = [ctypes.c_char_p]
-            C_LIB.check_password_strength.restype = ctypes.c_int
+            C_LIB.check_password.argtypes = [ctypes.c_char_p]
+            C_LIB.check_password.restype = ctypes.c_int
         except Exception:
             C_LIB = None
-
 load_c_library()
-
-def call_c_strength_check(password: str) -> int:
+def call_c_function(password: str) -> bool:
     if C_LIB:
-        return C_LIB.check_password_strength(password.encode("utf-8"))
-    score = len(password) * 4
-    if any(c.isupper() for c in password): score += 10
-    if any(c.islower() for c in password): score += 10
-    if any(c.isdigit() for c in password): score += 10
-    if any(c in string.punctuation for c in password): score += 15
-    return min(score, 100)
-
+        return bool(C_LIB.check_password(password.encode("utf-8")))
+    return (
+        any(c.isupper() for c in password)
+        and any(c.islower() for c in password)
+        and any(c.isdigit() for c in password)
+        and any(c in string.punctuation for c in password)
+    )
 def generate_password(length=16, use_upper=True, use_lower=True, use_digits=True, use_symbols=True) -> str:
     pool, guaranteed = "", []
     for enabled, chars in [
@@ -53,20 +47,16 @@ def generate_password(length=16, use_upper=True, use_lower=True, use_digits=True
     chars = guaranteed + [secrets.choice(pool) for _ in range(max(0, length - len(guaranteed)))]
     secrets.SystemRandom().shuffle(chars)
     return "".join(chars[:length])
-
 def hash_password_pbkdf2(password: str, iterations=100000):
     salt = secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), iterations).hex()
     return salt, h, iterations
-
 def verify_password_pbkdf2(password: str, salt_hex: str, expected_hash_hex: str, iterations=100000) -> bool:
     h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), iterations).hex()
     return secrets.compare_digest(h, expected_hash_hex)
-
 @app.route("/")
 def index():
     return jsonify({"service": "SecurePass REST API", "status": "running"})
-
 @app.route("/api/generate", methods=["POST", "GET"])
 def api_generate():
     data = request.get_json(silent=True) or request.args.to_dict()
@@ -79,7 +69,6 @@ def api_generate():
         str(data.get("symbols", "true")).lower() == "true"
     )
     return jsonify({"password": pw, "length": len(pw)})
-
 @app.route("/api/hash", methods=["POST"])
 def api_hash():
     pw = (request.get_json(silent=True) or {}).get("password", "")
@@ -87,7 +76,6 @@ def api_hash():
         return jsonify({"error": "Password cannot be empty"}), 400
     salt, h, iters = hash_password_pbkdf2(pw)
     return jsonify({"salt": salt, "hash": h, "iterations": iters, "algorithm": "PBKDF2-HMAC-SHA256"})
-
 @app.route("/api/verify", methods=["POST"])
 def api_verify():
     data = request.get_json(silent=True) or {}
@@ -96,12 +84,10 @@ def api_verify():
         return jsonify({"error": "Must provide password, salt, and hash"}), 400
     valid = verify_password_pbkdf2(pw, salt, h, int(data.get("iterations", 100000)))
     return jsonify({"valid": valid, "message": "Password matches!" if valid else "Password is WRONG!"})
-
-@app.route("/api/check_strength", methods=["POST"])
-def api_check_strength():
+@app.route("/api/c_check", methods=["POST"])
+def api_c_check():
     pw = (request.get_json(silent=True) or {}).get("password", "")
-    return jsonify({"password": pw, "strength_score": call_c_strength_check(pw), "c_library_active": C_LIB is not None})
-
+    return jsonify({"valid": call_c_function(pw), "c_library_active": C_LIB is not None})
 @app.route("/api/passwords", methods=["GET", "POST"])
 def api_passwords():
     if request.method == "POST":
@@ -112,30 +98,27 @@ def api_passwords():
         _, h, _ = hash_password_pbkdf2(pw)
         return jsonify({"message": "Saved to SQLite!", "id": db.save_password(svc, user, pw, h)}), 201
     return jsonify({"passwords": db.get_all_passwords()})
-
 @app.route("/api/passwords/<int:item_id>", methods=["DELETE"])
 def api_delete_password(item_id):
     if db.delete_password(item_id):
         return jsonify({"message": f"Deleted password {item_id}"})
     return jsonify({"error": "Not found"}), 404
-
 def terminal_menu():
     while True:
-        print("\n" + "=" * 45)
-        print("        SECUREPASS - TERMINAL VAULT")
-        print("=" * 45)
+        print("\n" + "=" * 40)
+        print("      SECUREPASS - TERMINAL VAULT")
+        print("=" * 40)
         print("1. Generate Password")
         print("2. PBKDF2 Hash Password")
         print("3. Verify Password Hash")
-        print("4. Check Strength via C (ctypes)")
+        print("4. Validate Password via C (ctypes)")
         print("5. Save Password to SQLite")
         print("6. List Saved Passwords")
         print("7. Delete Saved Password")
         print("8. Start Flask REST API Server")
         print("9. Exit")
-        print("=" * 45)
+        print("=" * 40)
         choice = input("Enter choice (1-9): ").strip()
-
         if choice == "1":
             try:
                 length = int(input("Length (default 16): ") or 16)
@@ -154,8 +137,7 @@ def terminal_menu():
             print("\nMatch" if verify_password_pbkdf2(pw, salt, h) else "\nNo match")
         elif choice == "4":
             pw = input("Enter password to test: ")
-            score = call_c_strength_check(pw)
-            print(f"\nStrength Score: {score}/100")
+            print("\nValid" if call_c_function(pw) else "\nInvalid")
         elif choice == "5":
             svc = input("Service Name: ")
             usr = input("Username/Email: ")
@@ -189,7 +171,6 @@ def terminal_menu():
         elif choice == "9":
             print("\nExiting.")
             break
-
 if __name__ == "__main__":
     if "--server" in sys.argv or "-s" in sys.argv:
         port = int(os.environ.get("PORT", 5000))
